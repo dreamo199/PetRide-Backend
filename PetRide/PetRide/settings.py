@@ -126,10 +126,12 @@ DATABASES = {
         # 'HOST': os.getenv("DB_HOST"),
         # 'PORT': os.getenv("DB_PORT"),
         dj_database_url.config(
-            default=os.getenv("DATABASE_URL"),
+            default="sqlite:///db.sqlite3",
             conn_max_age=600,
         )
 }
+
+DATABASES['default'] = dj_database_url.parse('postgresql://petride_db_user:cgPdooy4gs70d9tMne3gMYmeWuQfpKEN@dpg-d6uf0emuk2gs739b3310-a/petride_db')
 
 # Email configuration
 
