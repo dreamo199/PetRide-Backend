@@ -118,7 +118,7 @@ ASGI_APPLICATION = 'PetRide.asgi.application'
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
 DATABASES = {
-    'default': {
+    'default': 
         # 'ENGINE': 'django.db.backends.postgresql',
         # 'NAME': os.getenv("DB_NAME"),
         # 'USER': os.getenv("DB_USER"),
@@ -129,7 +129,6 @@ DATABASES = {
             default=os.getenv("DATABASE_URL"),
             conn_max_age=600,
         )
-    }
 }
 
 # Email configuration
