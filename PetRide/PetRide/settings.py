@@ -2,6 +2,7 @@ from decimal import Decimal
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+import dj_database_url
 from datetime import timedelta
 
 load_dotenv()
@@ -16,7 +17,7 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 
 DEBUG = os.getenv("DEBUG") == 'False'
 
-ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+ALLOWED_HOSTS = ["*"]
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")   
 
@@ -37,6 +38,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'channels',
     'django_extensions',
+    'whitenoise',
 
     # Local
     'users',
@@ -77,6 +79,7 @@ SIMPLE_JWT = {
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -183,6 +186,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
