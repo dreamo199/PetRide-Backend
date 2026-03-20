@@ -19,7 +19,7 @@ DEBUG = os.getenv("DEBUG") == 'False'
 
 ALLOWED_HOSTS = ["*"]
 
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")   
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000").split(',')
 
 INSTALLED_APPS = [
     'daphne',
@@ -88,7 +88,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-CORS_ALLOWED_ORIGINS = ['http://localhost:5173']
+CORS_ALLOWED_ORIGINS = ['http://localhost:3000', os.environ.get("FRONTEND_URL", '').split(',')]
 
 AUTH_USER_MODEL = 'users.User'
 
@@ -126,12 +126,10 @@ DATABASES = {
         # 'HOST': os.getenv("DB_HOST"),
         # 'PORT': os.getenv("DB_PORT"),
         dj_database_url.config(
-            default="sqlite:///db.sqlite3",
+            default=os.environ.get('DATABASE_URL'),
             conn_max_age=600,
         )
 }
-
-DATABASES['default'] = dj_database_url.parse('postgresql://petride_db_user:cgPdooy4gs70d9tMne3gMYmeWuQfpKEN@dpg-d6uf0emuk2gs739b3310-a/petride_db')
 
 # Email configuration
 
