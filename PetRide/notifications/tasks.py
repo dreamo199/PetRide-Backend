@@ -1,141 +1,122 @@
-from django.core.mail import send_mail, EmailMultiAlternatives
+from django.core.mail import send_mail
 from django.conf import settings
-from django.template.loader import render_to_string
-from django.utils.html import strip_tags
-from celery import shared_task
-from celery.utils.log import get_task_logger
+import threading
 import logging
 
-logger = get_task_logger(__name__)
+logger = logging.getLogger(__name__)
+
+CANCELLATION_REASON_MAP = {
+    'customer_request': 'You cancelled the order',
+    'driver_unavailable': 'Driver became unavailable',
+    'payment_failed': 'Payment could not be processed',
+    'out_of_stock': 'Fuel temporarily out of stock',
+    'customer_unreachable': 'Unable to reach you for confirmation',
+    'admin_action': 'Administrative action',
+    'other': 'Other reasons',
+}
 
 
-class EmailTaskError(Exception):
-    pass
+def _send_async(func, *args):
+    """Run an email function in a background thread."""
+    def wrapper():
+        try:
+            func(*args)
+        except Exception as e:
+            logger.error(f"Async email failed [{func.__name__}]: {str(e)}", exc_info=True)
+
+    thread = threading.Thread(target=wrapper, daemon=True)
+    thread.start()
 
 
-@shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 60},
-             retry_backoff=True, retry_backoff_max=600, retry_jitter=True)
-def send_order_confirmation_email(self, order_id):
+def _do_send(subject, message, recipient):
+    """Core send helper."""
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[recipient],
+        fail_silently=False,
+    )
+
+def _build_order_confirmation(order_id):
     from orders.models import Order
-
     try:
         order = Order.objects.select_related(
-            'customer__user', 'fuel_type', 'driver'
+            'customer__user', 'fuel_type'
         ).get(id=order_id)
     except Order.DoesNotExist:
         logger.error(f"Order {order_id} not found for confirmation email")
-        return f"Order {order_id} not found"
+        return
 
     if not order.customer.user.email:
-        logger.warning(f"No email address for customer {order.customer.user.username}")
-        return "No email address"
+        logger.warning(f"No email for customer on order {order_id}")
+        return
 
-    try:
-        subject = f'Order Confirmation - {order.order_number}'
+    customer_name = order.customer.user.get_full_name() or order.customer.user.username
 
-        # Create context for email template
-        context = {
-            'customer_name': order.customer.user.get_full_name() or order.customer.user.username,
-            'order_number': order.order_number,
-            'fuel_type': order.fuel_type.get_name_display(),
-            'quantity': order.quantity_liters,
-            'fuel_price': order.fuel_price,
-            'delivery_fee': order.delivery_fee,
-            'service_charge': order.service_charge,
-            'total_price': order.total_price,
-            'delivery_address': order.delivery_address,
-            'scheduled_time': order.scheduled_time,
-            'currency': '₦',
-        }
-
-        # Plain text message (fallback)
-        message = f'''
-Hello {context['customer_name']},
+    message = f'''
+Hello {customer_name},
 
 Thank you for your order! We've received your fuel delivery request.
 
 ORDER DETAILS
 ═════════════════════════════════════════
 Order Number:     {order.order_number}
-Fuel Type:        {context['fuel_type']}
-Quantity:         {context['quantity']} liters
-Delivery Address: {context['delivery_address']}
+Fuel Type:        {order.fuel_type.get_name_display()}
+Quantity:         {order.quantity_liters} liters
+Delivery Address: {order.delivery_address}
 
 PRICING BREAKDOWN
 ═════════════════════════════════════════
-Fuel Cost:        ₦{context['fuel_price']:,.2f}
-Delivery Fee:     ₦{context['delivery_fee']:,.2f}
-Service Charge:   ₦{context['service_charge']:,.2f}
+Fuel Cost:        ₦{order.fuel_price:,.2f}
+Delivery Fee:     ₦{order.delivery_fee:,.2f}
+Service Charge:   ₦{order.service_charge:,.2f}
 ─────────────────────────────────────────
-TOTAL:            ₦{context['total_price']:,.2f}
+TOTAL:            ₦{order.total_price:,.2f}
 ═════════════════════════════════════════
 
 WHAT'S NEXT?
-We'll notify you as soon as a driver accepts your order and is on the way.
+We'll notify you as soon as a driver accepts your order.
 
 Need help? Contact our support team.
 
-Thank you for choosing our service!
-
 Best regards,
 The PetRide Team
-        '''.strip()
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[order.customer.user.email],
-            fail_silently=False,
-        )
+    '''.strip()
 
-        logger.info(f"Order confirmation email sent for order {order.order_number}")
-        return f"Confirmation email sent for order {order.order_number}"
-
-    except Exception as e:
-        logger.error(
-            f"Failed to send confirmation email for order {order.order_number}: {str(e)}",
-            exc_info=True
-        )
-        raise self.retry(exc=e)
+    _do_send(
+        subject=f'Order Confirmation - {order.order_number}',
+        message=message,
+        recipient=order.customer.user.email,
+    )
+    logger.info(f"Confirmation email sent for {order.order_number}")
 
 
-@shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 60},
-             retry_backoff=True, retry_backoff_max=600, retry_jitter=True)
-def send_driver_assignment_notification(self, order_id):
+def _build_driver_assignment(order_id):
     from orders.models import Order
-
     try:
         order = Order.objects.select_related(
             'customer__user', 'driver__user', 'fuel_type'
         ).get(id=order_id)
     except Order.DoesNotExist:
-        logger.error(f"Order {order_id} not found for driver assignment notification")
-        return f"Order {order_id} not found"
+        logger.error(f"Order {order_id} not found for driver assignment email")
+        return
 
     if not order.driver:
-        logger.warning(f"Order {order.order_number} has no driver assigned")
-        return "No driver assigned"
+        logger.warning(f"Order {order_id} has no driver assigned")
+        return
 
     if not order.customer.user.email:
-        logger.warning(f"No email address for customer {order.customer.user.username}")
-        return "No email address"
+        logger.warning(f"No email for customer on order {order_id}")
+        return
 
-    try:
-        subject = f'Driver Assigned - Order {order.order_number}'
+    customer_name = order.customer.user.get_full_name() or order.customer.user.username
+    driver_name = order.driver.user.get_full_name() or order.driver.user.first_name
 
-        driver_name = order.driver.user.get_full_name() or order.driver.user.first_name
-
-        message = f'''
-Hello {order.customer.user.get_full_name() or order.customer.user.username},
+    message = f'''
+Hello {customer_name},
 
 Great news! A driver has been assigned to your order.
-
-ORDER INFORMATION
-═════════════════════════════════════════
-Order Number:     {order.order_number}
-Status:           Driver Assigned
-Fuel Type:        {order.fuel_type.get_name_display()}
-Quantity:         {order.quantity_liters} liters
 
 DRIVER DETAILS
 ═════════════════════════════════════════
@@ -143,72 +124,103 @@ Driver Name:      {driver_name}
 Vehicle Type:     {order.driver.vehicle_type}
 Vehicle Number:   {order.driver.vehicle_number}
 
+ORDER INFORMATION
+═════════════════════════════════════════
+Order Number:     {order.order_number}
+Fuel Type:        {order.fuel_type.get_name_display()}
+Quantity:         {order.quantity_liters} liters
+
 Your driver will contact you shortly to confirm delivery details.
-
 Track your order status in real-time through our app.
-
-Thank you for your patience!
 
 Best regards,
 The PetRide Team
-        '''.strip()
+    '''.strip()
 
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[order.customer.user.email],
-            fail_silently=False,
-        )
-
-        logger.info(f"Driver assignment notification sent for order {order.order_number}")
-        return f"Driver assignment notification sent for order {order.order_number}"
-
-    except Exception as e:
-        logger.error(
-            f"Failed to send driver assignment notification for order {order.order_number}: {str(e)}",
-            exc_info=True
-        )
-        raise self.retry(exc=e)
+    _do_send(
+        subject=f'Driver Assigned - {order.order_number}',
+        message=message,
+        recipient=order.customer.user.email,
+    )
+    logger.info(f"Driver assignment email sent for {order.order_number}")
 
 
-@shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 60},
-             retry_backoff=True, retry_backoff_max=600, retry_jitter=True)
-def send_order_cancellation_email(self, order_id):
+def _build_order_completed(order_id):
     from orders.models import Order
+    try:
+        order = Order.objects.select_related(
+            'customer__user', 'driver__user', 'fuel_type'
+        ).get(id=order_id)
+    except Order.DoesNotExist:
+        logger.error(f"Order {order_id} not found for completion email")
+        return
 
-    CANCELLATION_REASON_MAP = {
-        'customer_request': 'You cancelled the order',
-        'driver_unavailable': 'Driver became unavailable',
-        'payment_failed': 'Payment could not be processed',
-        'out_of_stock': 'Fuel temporarily out of stock',
-        'customer_unreachable': 'Unable to reach you for confirmation',
-        'admin_action': 'Administrative action',
-        'other': 'Other reasons',
-    }
+    if not order.customer.user.email:
+        logger.warning(f"No email for customer on order {order_id}")
+        return
 
+    customer_name = order.customer.user.get_full_name() or order.customer.user.username
+
+    message = f'''
+Hello {customer_name},
+
+Your fuel delivery has been completed!
+
+ORDER SUMMARY
+═════════════════════════════════════════
+Order Number:     {order.order_number}
+Fuel Type:        {order.fuel_type.get_name_display()}
+Quantity:         {order.quantity_liters} liters
+Total Paid:       ₦{order.total_price:,.2f}
+Delivery Address: {order.delivery_address}
+'''
+
+    if order.driver:
+        driver_name = order.driver.user.get_full_name() or order.driver.user.first_name
+        message += f'''Driver:           {driver_name}
+Vehicle:          {order.driver.vehicle_type} ({order.driver.vehicle_number})
+'''
+
+    message += '''
+RATE YOUR EXPERIENCE
+═════════════════════════════════════════
+Log in to rate this order. Your feedback helps us improve.
+
+Thank you for choosing PetRide!
+
+Best regards,
+The PetRide Team
+    '''.strip()
+
+    _do_send(
+        subject=f'Order Completed - {order.order_number}',
+        message=message,
+        recipient=order.customer.user.email,
+    )
+    logger.info(f"Completion email sent for {order.order_number}")
+
+
+def _build_order_cancellation(order_id):
+    from orders.models import Order
     try:
         order = Order.objects.select_related(
             'customer__user', 'fuel_type'
         ).get(id=order_id)
     except Order.DoesNotExist:
         logger.error(f"Order {order_id} not found for cancellation email")
-        return f"Order {order_id} not found"
+        return
 
     if not order.customer.user.email:
-        logger.warning(f"No email address for customer {order.customer.user.username}")
-        return "No email address"
+        logger.warning(f"No email for customer on order {order_id}")
+        return
 
-    try:
-        subject = f'Order Cancelled - {order.order_number}'
+    customer_name = order.customer.user.get_full_name() or order.customer.user.username
+    reason_text = CANCELLATION_REASON_MAP.get(
+        order.cancellation_reason, 'Order was cancelled'
+    )
 
-        reason_text = CANCELLATION_REASON_MAP.get(
-            order.cancellation_reason,
-            'Order was cancelled'
-        )
-
-        message = f'''
-Hello {order.customer.user.get_full_name() or order.customer.user.username},
+    message = f'''
+Hello {customer_name},
 
 Your order has been cancelled.
 
@@ -224,152 +236,50 @@ CANCELLATION REASON
 {reason_text}
 '''
 
-        if order.cancellation_notes:
-            message += f'''
-Additional Information:
-{order.cancellation_notes}
-'''
+    if order.cancellation_notes:
+        message += f'\nAdditional Information:\n{order.cancellation_notes}\n'
 
-        if order.cancellation_reason != 'customer_request':
-            message += '''
-
+    if order.cancellation_reason != 'customer_request':
+        message += '''
 REFUND INFORMATION
 ═════════════════════════════════════════
-If you were charged for this order, a full refund will be 
-processed within 3-5 business days.
+If you were charged, a full refund will be processed within 3-5 business days.
 '''
 
-        message += '''
-
-We apologize for any inconvenience. You can place a new order 
-anytime through our app.
-
-If you have questions, please contact our support team.
-
-Thank you for your understanding.
+    message += '''
+We apologize for any inconvenience. You can place a new order anytime.
 
 Best regards,
 The PetRide Team
-        '''.strip()
+    '''.strip()
 
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[order.customer.user.email],
-            fail_silently=False,
-        )
-
-        logger.info(f"Cancellation email sent for order {order.order_number}")
-        return f"Cancellation email sent for order {order.order_number}"
-
-    except Exception as e:
-        logger.error(
-            f"Failed to send cancellation email for order {order.order_number}: {str(e)}",
-            exc_info=True
-        )
-        raise self.retry(exc=e)
+    _do_send(
+        subject=f'Order Cancelled - {order.order_number}',
+        message=message,
+        recipient=order.customer.user.email,
+    )
+    logger.info(f"Cancellation email sent for {order.order_number}")
 
 
-@shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 60},
-             retry_backoff=True, retry_backoff_max=600, retry_jitter=True)
-def send_order_completed_notification(self, order_id):
-    from orders.models import Order
-
-    try:
-        order = Order.objects.select_related(
-            'customer__user', 'driver__user', 'fuel_type'
-        ).get(id=order_id)
-    except Order.DoesNotExist:
-        logger.error(f"Order {order_id} not found for completion email")
-        return f"Order {order_id} not found"
-
-    if not order.customer.user.email:
-        logger.warning(f"No email address for customer {order.customer.user.username}")
-        return "No email address"
-
-    try:
-        subject = f'Order Completed - {order.order_number}'
-
-        message = f'''
-Hello {order.customer.user.get_full_name() or order.customer.user.username},
-
-Your fuel delivery has been completed!
-
-ORDER SUMMARY
-═════════════════════════════════════════
-Order Number:     {order.order_number}
-Fuel Type:        {order.fuel_type.get_name_display()}
-Quantity:         {order.quantity_liters} liters
-Total Paid:       ₦{order.total_price:,.2f}
-Delivery Address: {order.delivery_address}
-'''
-
-        if order.driver:
-            driver_name = order.driver.user.get_full_name() or order.driver.user.first_name
-            message += f'''
-Driver:           {driver_name}
-Vehicle:          {order.driver.vehicle_type} ({order.driver.vehicle_number})
-'''
-
-        message += f'''
-
-RATE YOUR EXPERIENCE
-═════════════════════════════════════════
-How was your delivery experience? Your feedback helps us 
-improve our service.
-
-Log in to rate this order and provide feedback.
-
-Thank you for choosing our service!
-
-Best regards,
-The PetRide Team
-        '''.strip()
-
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[order.customer.user.email],
-            fail_silently=False,
-        )
-
-        logger.info(f"Completion email sent for order {order.order_number}")
-        return f"Completion email sent for order {order.order_number}"
-
-    except Exception as e:
-        logger.error(
-            f"Failed to send completion email for order {order.order_number}: {str(e)}",
-            exc_info=True
-        )
-        raise self.retry(exc=e)
-
-
-@shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 60},
-             retry_backoff=True, retry_backoff_max=600, retry_jitter=True)
-def send_driver_order_notification(self, order_id, driver_id):
+def _build_driver_order_notification(order_id, driver_id):
     from orders.models import Order
     from users.models import DriverProfile
-
     try:
-        order = Order.objects.select_related(
-            'customer__user', 'fuel_type'
-        ).get(id=order_id)
+        order = Order.objects.select_related('customer__user', 'fuel_type').get(id=order_id)
         driver = DriverProfile.objects.select_related('user').get(id=driver_id)
     except (Order.DoesNotExist, DriverProfile.DoesNotExist) as e:
         logger.error(f"Order or driver not found: {str(e)}")
-        return "Order or driver not found"
+        return
 
     if not driver.user.email:
-        logger.warning(f"No email address for driver {driver.user.username}")
-        return "No email address"
+        logger.warning(f"No email for driver {driver_id}")
+        return
 
-    try:
-        subject = f'New Delivery Assignment - Order {order.order_number}'
+    driver_name = driver.user.get_full_name() or driver.user.first_name
+    customer_name = order.customer.user.get_full_name() or order.customer.user.username
 
-        message = f'''
-Hello {driver.user.get_full_name() or driver.user.first_name},
+    message = f'''
+Hello {driver_name},
 
 You have been assigned a new delivery order!
 
@@ -381,21 +291,11 @@ Quantity:         {order.quantity_liters} liters
 
 CUSTOMER INFORMATION
 ═════════════════════════════════════════
-Customer:         {order.customer.user.get_full_name() or order.customer.user.username}
+Customer:         {customer_name}
 Phone:            {order.customer.user.phone}
 Delivery Address: {order.delivery_address}
 Distance:         {order.distance_km} km
-
-DELIVERY INSTRUCTIONS
-═════════════════════════════════════════
-'''
-
-        if order.notes:
-            message += f'''
-Customer Notes: {order.notes}
-'''
-
-        message += '''
+{f"Customer Notes:   {order.notes}" if order.notes else ""}
 
 Please contact the customer to confirm delivery details.
 Update the order status as you progress.
@@ -404,22 +304,26 @@ Drive safely!
 
 Best regards,
 The PetRide Team
-        '''.strip()
+    '''.strip()
 
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[driver.user.email],
-            fail_silently=False,
-        )
+    _do_send(
+        subject=f'New Delivery Assignment - {order.order_number}',
+        message=message,
+        recipient=driver.user.email,
+    )
+    logger.info(f"Driver notification sent for {order.order_number}")
 
-        logger.info(f"Driver notification sent for order {order.order_number}")
-        return f"Driver notification sent for order {order.order_number}"
+def send_order_confirmation_email(order_id):
+    _send_async(_build_order_confirmation, order_id)
 
-    except Exception as e:
-        logger.error(
-            f"Failed to send driver notification for order {order.order_number}: {str(e)}",
-            exc_info=True
-        )
-        raise self.retry(exc=e)
+def send_driver_assignment_notification(order_id):
+    _send_async(_build_driver_assignment, order_id)
+
+def send_order_completed_notification(order_id):
+    _send_async(_build_order_completed, order_id)
+
+def send_order_cancellation_email(order_id):
+    _send_async(_build_order_cancellation, order_id)
+
+def send_driver_order_notification(order_id, driver_id):
+    _send_async(_build_driver_order_notification, order_id, driver_id)

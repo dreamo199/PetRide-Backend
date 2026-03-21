@@ -64,10 +64,10 @@ class OrderViewSet(viewsets.ModelViewSet):
         
         order = serializer.save(customer=customer)
 
-        # try:
-        #     send_order_confirmation_email.delay(order.id)
-        # except Exception as e:
-        #     logger.error(f'Failed to queue confirmation email: {e}')
+        try:
+            send_order_confirmation_email(order.id)
+        except Exception as e:
+            logger.error(f'Failed to queue confirmation email: {e}')
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsOrderDriver])
     def active_orders(self, request):
@@ -120,14 +120,14 @@ class OrderViewSet(viewsets.ModelViewSet):
             changed_by = request.user,
             reason= f'Order accepted by driver {driver.user.get_full_name()} - Vehicle number {driver.vehicle_number}'
         )
-        # try:
-        #     send_driver_order_notification.delay(order.id, driver.id)
-        # except Exception as e:
-        #     logger.error(f"Failed to send confirmation email to driver {e}")
-        # try:
-        #     send_driver_assignment_notification.delay(order.id)
-        # except Exception as e:
-        #     logger.error(f"Failed to send driver assignment email to user {e}")
+        try:
+            send_driver_order_notification(order.id, driver.id)
+        except Exception as e:
+            logger.error(f"Failed to send confirmation email to driver {e}")
+        try:
+            send_driver_assignment_notification(order.id)
+        except Exception as e:
+            logger.error(f"Failed to send driver assignment email to user {e}")
         
         logger.info(f"Driver {driver.user.username} accepted order {order.id} at {timezone.now()}")
         return Response({'message': 'order accepted', 'order': OrderSerializer(order).data}, status=status.HTTP_200_OK)
@@ -169,10 +169,10 @@ class OrderViewSet(viewsets.ModelViewSet):
                 order.driver.total_deliveries += 1
                 order.driver.save()
             order.save()
-            # try:
-            #     send_order_completed_notification.delay(order.id)
-            # except Exception as e:
-            #     logger.error(f"Error sending cancellation email: {e}")
+            try:
+                send_order_completed_notification(order.id)
+            except Exception as e:
+                logger.error(f"Error sending cancellation email: {e}")
             return Response({'status': 'Order completed'})
         elif new_status == 'cancelled':
             cancellation_reason = serializer.validated_data.get('cancellation_reason')
@@ -202,11 +202,11 @@ class OrderViewSet(viewsets.ModelViewSet):
                 order.save()
                 logger.info(f"Order {order.order_number} returned to pool by driver {user.username}")
 
-                # try:
-                #     send_order_cancellation_email.delay(order.id)
-                # except Exception as e:
-                #     logger.error(f"Error sending cancellation email: {e}")
-                # return Response({'status': 'Order returned to pending pool'})
+                try:
+                    send_order_cancellation_email(order.id)
+                except Exception as e:
+                    logger.error(f"Error sending cancellation email: {e}")
+                return Response({'status': 'Order returned to pending pool'})
         elif new_status == 'in_transit':
             order.status = 'in_transit'
             order.in_transit_at = timezone.now()
