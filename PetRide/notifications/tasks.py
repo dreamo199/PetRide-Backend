@@ -313,6 +313,25 @@ The PetRide Team
     )
     logger.info(f"Driver notification sent for {order.order_number}")
 
+def send_welcome_email(email, first_name):
+    _send_async(_do_welcome, email, first_name)
+
+def _do_welcome(email, first_name):
+    _do_send(
+        subject='Welcome to PetRide!',
+        message=f'''
+Hi {first_name or 'there'},
+
+Welcome to PetRide! Your account has been created successfully.
+
+You can now log in and start ordering fuel delivered to your doorstep.
+
+Best regards,
+The PetRide Team
+        '''.strip(),
+        recipient=email,
+    )
+
 def send_order_confirmation_email(order_id):
     _send_async(_build_order_confirmation, order_id)
 

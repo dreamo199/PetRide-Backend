@@ -103,19 +103,22 @@ class CustomerRegistrationSerializer(serializers.ModelSerializer):
             role='customer'
         )
         
-        token = VerificationToken.objects.create(user=user)
+        # token = VerificationToken.objects.create(user=user)
         
-        try:
-            verification_url = f"{settings.FRONTEND_URL}/verify/{token.token}"
-            send_mail(
-                'Verify Your PetRide Account',
-                f'Click to verify: {verification_url}',
-                settings.EMAIL_HOST_USER,
-                [user.email],
-                fail_silently=True,
-            )
-        except Exception as e:
-            logger.error(f"Failed to send verification email to {user.email}: {e}")
+        # try:
+        #     verification_url = f"{settings.FRONTEND_URL}/verify/{token.token}"
+        #     send_mail(
+        #         'Verify Your PetRide Account',
+        #         f'Click to verify: {verification_url}',
+        #         settings.EMAIL_HOST_USER,
+        #         [user.email],
+        #         fail_silently=True,
+        #     )
+        # except Exception as e:
+        #     logger.error(f"Failed to send verification email to {user.email}: {e}")
+
+        from notifications.tasks import send_welcome_email
+        send_welcome_email(user.email, user.first_name)
 
         CustomerProfile.objects.create(
             user=user,
@@ -167,19 +170,22 @@ class DriverRegistrationSerializer(serializers.ModelSerializer):
             last_name=validated_data.get('last_name', ''),
             role='driver'
         )
-        token = VerificationToken.objects.create(user=user)
+        # token = VerificationToken.objects.create(user=user)
         
-        try:
-            verification_url = f"{settings.FRONTEND_URL}/verify/{token.token}"
-            send_mail(
-                'Verify Your PetRide Account',
-                f'Click to verify: {verification_url}',
-                settings.EMAIL_HOST_USER,
-                [user.email],
-                fail_silently=True,
-            )
-        except Exception as e:
-            logger.error(f"Failed to send verification email to {user.email}: {e}")
+        # try:
+        #     verification_url = f"{settings.FRONTEND_URL}/verify/{token.token}"
+        #     send_mail(
+        #         'Verify Your PetRide Account',
+        #         f'Click to verify: {verification_url}',
+        #         settings.EMAIL_HOST_USER,
+        #         [user.email],
+        #         fail_silently=True,
+        #     )
+        # except Exception as e:
+        #     logger.error(f"Failed to send verification email to {user.email}: {e}")
+
+        from notifications.tasks import send_welcome_email
+        send_welcome_email(user.email, user.first_name)
         
         DriverProfile.objects.create(
             user=user,
