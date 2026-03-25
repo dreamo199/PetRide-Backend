@@ -7,19 +7,19 @@ from datetime import timedelta
 
 load_dotenv()
 
-DEPOT_LAT = Decimal(os.getenv("DEPOT_LAT",))
-DEPOT_LNG = Decimal(os.getenv("DEPOT_LNG",))
+DEPOT_LAT = Decimal(os.getenv("DEPOT_LAT",) or os.environ.get("DEPOT_LAT", "0"))
+DEPOT_LNG = Decimal(os.getenv("DEPOT_LNG",) or os.environ.get("DEPOT_LNG", "0"))
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv("SECRET_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY") or os.environ.get("SECRET_KEY")
 
-DEBUG = False
+DEBUG = os.environ.get('DEBUG') or os.getenv('DEBUG', 'True')
 
 ALLOWED_HOSTS = ["*"]
 
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000").split(',')
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").split(',')
 
 INSTALLED_APPS = [
     'daphne',
@@ -87,7 +87,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-CORS_ALLOWED_ORIGINS = os.environ.get("FRONTEND_URL", '').split(',')
+CORS_ALLOWED_ORIGINS = os.environ.get("FRONTEND_URL", 'http://localhost:5173').split(',')
 
 AUTH_USER_MODEL = 'users.User'
 
@@ -118,12 +118,13 @@ ASGI_APPLICATION = 'PetRide.asgi.application'
 
 DATABASES = {
     'default': 
-        # 'ENGINE': 'django.db.backends.postgresql',
-        # 'NAME': os.getenv("DB_NAME"),
-        # 'USER': os.getenv("DB_USER"),
-        # 'PASSWORD': os.getenv("DB_PASSWORD"),
-        # 'HOST': os.getenv("DB_HOST"),
-        # 'PORT': os.getenv("DB_PORT"),
+    #     'ENGINE': 'django.db.backends.postgresql',
+    #     'NAME': os.getenv("DB_NAME"),
+    #     'USER': os.getenv("DB_USER"),
+    #     'PASSWORD': os.getenv("DB_PASSWORD"),
+    #     'HOST': os.getenv("DB_HOST"),
+    #     'PORT': os.getenv("DB_PORT"),
+    # }
         dj_database_url.config(
             default=os.environ.get('DATABASE_URL'),
             conn_max_age=600,
@@ -159,18 +160,11 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-# Celery
-
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
-CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            "hosts": [('127.0.0.1', 6379)],
+            "hosts": [os.getenv('REDIS_URL') or os.environ.get('REDIS_URL')],
         },
     },
 }

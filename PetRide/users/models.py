@@ -89,6 +89,7 @@ class DriverProfile(models.Model):
     is_available = models.BooleanField(default=True)
     current_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, validators=[MinValueValidator(Decimal('-90')), MaxValueValidator((Decimal('90')))])
     current_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, validators=[MinValueValidator(Decimal('-180')), MaxValueValidator((Decimal('180')))])
+    last_location_update = models.DateTimeField(null=True, blank=True)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0.00, validators= [MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('5.00'))])
     total_deliveries = models.IntegerField(default=0, validators=[MinValueValidator(0)])
     created_at = models.DateTimeField(auto_now_add=True)

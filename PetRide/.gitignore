@@ -1,0 +1,2 @@
+echo ".env" >> .gitignore
+echo "db.sqlite3" >> .gitignore 
