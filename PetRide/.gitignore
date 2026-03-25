@@ -1,2 +1,7 @@
-echo ".env" >> .gitignore
-echo "db.sqlite3" >> .gitignore 
+.env
+.venv
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+virt7/
